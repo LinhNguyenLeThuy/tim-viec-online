@@ -1,4 +1,3 @@
-
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS `ai_cv_analyses`;
 DROP TABLE IF EXISTS `messages`;
@@ -48,7 +47,6 @@ CREATE TABLE `users` (
 
 -- --------------------------------------------------------
 -- 2. BẢNG `candidate_profiles` (Hồ sơ cá nhân của Ứng viên)
--- Cần cả created_at & updated_at: Theo dõi lịch sử cập nhật hồ sơ cá nhân
 -- --------------------------------------------------------
 CREATE TABLE `candidate_profiles` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -70,7 +68,6 @@ CREATE TABLE `candidate_profiles` (
 
 -- --------------------------------------------------------
 -- 3. BẢNG `companies` (Hồ sơ Doanh nghiệp / Nhà tuyển dụng)
--- Cần cả created_at & updated_at: Theo dõi lần cập nhật thông tin doanh nghiệp
 -- --------------------------------------------------------
 CREATE TABLE `companies` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -91,7 +88,6 @@ CREATE TABLE `companies` (
 
 -- --------------------------------------------------------
 -- 4. BẢNG `categories` (Danh mục ngành nghề)
--- Bảng danh mục tĩnh: KHÔNG CẦN created_at & updated_at
 -- --------------------------------------------------------
 CREATE TABLE `categories` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -101,7 +97,6 @@ CREATE TABLE `categories` (
 
 -- --------------------------------------------------------
 -- 5. BẢNG `skills` (Danh mục kỹ năng chuyên môn)
--- Bảng danh mục tĩnh: KHÔNG CẦN created_at & updated_at
 -- --------------------------------------------------------
 CREATE TABLE `skills` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -112,7 +107,6 @@ CREATE TABLE `skills` (
 
 -- --------------------------------------------------------
 -- 6. BẢNG `candidate_skills` (Kỹ năng của Ứng viên - N:N Pivot)
--- Bảng trung gian thuần túy: KHÔNG CẦN id, created_at, updated_at
 -- --------------------------------------------------------
 CREATE TABLE `candidate_skills` (
   `candidate_id` BIGINT UNSIGNED NOT NULL,
@@ -124,7 +118,6 @@ CREATE TABLE `candidate_skills` (
 
 -- --------------------------------------------------------
 -- 7. BẢNG `jobs` (Tin tuyển dụng)
--- Cần cả created_at & updated_at: Sắp xếp theo ngày đăng và ghi nhận ngày sửa đổi tin
 -- --------------------------------------------------------
 CREATE TABLE `jobs` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -147,10 +140,11 @@ CREATE TABLE `jobs` (
   `is_reported` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1: Bị báo cáo vi phạm, 0: Bình thường',
   `rejection_reason` VARCHAR(255) DEFAULT NULL COMMENT 'Lý do xóa hoặc cảnh báo từ Admin',
   `views_count` INT UNSIGNED NOT NULL DEFAULT 0,
-  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Thời điểm đăng tin tuyển dụng',
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Thời điểm đẩy tin (bump_at): Tự động reset thời gian khi có ứng viên nộp hồ sơ (apply) hoặc NTD chỉnh sửa tin để đẩy bài lên đầu',
   PRIMARY KEY (`id`),
   KEY `jobs_filter_idx` (`status`, `city`, `salary_min`, `salary_max`, `deadline`),
+  KEY `jobs_updated_at_idx` (`updated_at`),
   KEY `jobs_company_idx` (`company_id`),
   KEY `jobs_category_idx` (`category_id`),
   KEY `jobs_reported_idx` (`is_reported`),
@@ -303,9 +297,9 @@ CREATE TABLE `password_reset_tokens` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ====================================================================
--- DỮ LIỆU KHỞI TẠO BAN ĐẦU (SEED DATA MẪU NGHIỆM THU ĐỒ ÁN)
+-- DỮ LIỆU KHỞI TẠO BAN ĐẦU
 -- Mật khẩu mặc định cho các tài khoản test: Password123@
--- Hash bcrypt tương ứng: $2y$12$K8j7mZ0z/jG8o6P1A6h6eu6x3z5uX8wZ9mK1b2c3d4e5f6g7h8i9j
+-- Hash bcrypt: $2y$12$K8j7mZ0z/jG8o6P1A6h6eu6x3z5uX8wZ9mK1b2c3d4e5f6g7h8i9j
 -- ====================================================================
 
 -- 1. Tài khoản Test cho 3 Role
