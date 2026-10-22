@@ -13,7 +13,7 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
-
+    'gemini' => ['key' => env('GEMINI_API_KEY')],
     'postmark' => [
         'token' => env('POSTMARK_TOKEN'),
     ],

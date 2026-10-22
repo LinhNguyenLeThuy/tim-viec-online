@@ -1,7 +1,6 @@
 <?php
 
 namespace App\Http\Controllers;
-
 use App\Models\Job;
 use App\Models\User;
 use App\Models\Category;
@@ -10,9 +9,224 @@ use App\Models\Notification;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-
+use App\Models\Application;
+use Carbon\Carbon;
 class AdminController extends Controller
-{
+{   
+    /**
+     * 1. GET /api/admin/stats - Thống kê hệ thống tổng quan
+     */
+    public function stats(Request $request): JsonResponse
+    {
+        $days = $request->query('days', 7); 
+        // Thống kê tổng số lượng
+        $usersCount = User::count();
+        $candidatesCount = User::where('role', 'candidate')->count();
+        $employersCount = User::where('role', 'employer')->count();
+        $lockedUsersCount = User::where('status', 'locked')->count();
+        $jobsCount = Job::count();
+        $activeJobsCount = Job::where('status', 'active')->count();
+        $closedJobsCount = Job::where('status', 'closed')->count();
+        $expiredJobsCount = Job::where('status', 'expired')->count();
+        $reportedJobsCount = Job::where('is_reported', true)->count();      
+        $applicationsCount = Application::count();
+        // Xu hướng (trends) theo số ngày yêu cầu
+        $trends = [];
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $date = Carbon::now()->subDays($i)->toDateString();
+            $jobsOnDate = Job::whereDate('created_at', $date)->count();
+            $appsOnDate = Application::whereDate('created_at', $date)->count();            
+            $trends[] = [
+                'date' => $date,
+                'jobs_count' => $jobsOnDate,
+                'applications_count' => $appsOnDate,
+            ];
+        }
+        // Dữ liệu phụ trợ
+        $recentUsers = User::latest()->take(5)->get(['id', 'name', 'email', 'role', 'status', 'created_at']);
+        $reportedJobs = Job::where('is_reported', true)->with('company')->latest()->take(5)->get();
+        $topCategories = Category::withCount('jobs')->orderByDesc('jobs_count')->take(5)->get();
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'users_count' => $usersCount,
+                'candidates_count' => $candidatesCount,
+                'employers_count' => $employersCount,
+                'locked_users_count' => $lockedUsersCount,
+                'jobs_count' => $jobsCount,
+                'active_jobs_count' => $activeJobsCount,
+                'closed_jobs_count' => $closedJobsCount,
+                'expired_jobs_count' => $expiredJobsCount,
+                'reported_jobs_count' => $reportedJobsCount,
+                'applications_count' => $applicationsCount,
+                'trends' => $trends,
+                'recent_users' => $recentUsers,
+                'reported_jobs' => $reportedJobs,
+                'top_categories' => $topCategories,
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * 2. GET /api/admin/users - Danh sách người dùng có lọc, tìm kiếm và phân trang
+     */
+    public function users(Request $request): JsonResponse
+    {
+        $query = User::query();
+
+        if ($request->filled('keyword')) {
+            $keyword = $request->query('keyword');
+            $query->where(function($q) use ($keyword) {
+                $q->where('name', 'like', "%{$keyword}%")
+                  ->orWhere('email', 'like', "%{$keyword}%")
+                  ->orWhere('phone', 'like', "%{$keyword}%");
+            });
+        }
+
+        if ($request->filled('role')) {
+            $query->where('role', $request->query('role'));
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->query('status'));
+        }
+
+        $sort = $request->query('sort', 'newest');
+        if ($sort === 'oldest') {
+            $query->oldest();
+        } elseif ($sort === 'name') {
+            $query->orderBy('name', 'asc');
+        } else {
+            $query->latest();
+        }
+
+        $perPage = $request->query('per_page', 15);
+        $users = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $users->items(),
+            'meta' => [
+                'total' => $users->total(),
+                'page' => $users->currentPage(),
+                'per_page' => $users->perPage(),
+                'last_page' => $users->lastPage(),
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * 3. GET /api/admin/users/{user_id} - Chi tiết người dùng
+     */
+    public function userDetail($userId): JsonResponse
+    {
+        $user = User::with(['company', 'candidateProfile'])->find($userId);
+
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'Không tìm thấy người dùng.'], 404);
+        }
+
+        $jobsCount = 0;
+        if ($user->role === 'employer' && $user->company) {
+            $jobsCount = Job::where('company_id', $user->company->id)->count();
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone,
+                'role' => $user->role,
+                'status' => $user->status,
+                'created_at' => $user->created_at,
+                'company' => $user->company,
+                'candidate_profile' => $user->candidateProfile,
+                'jobs_count' => $jobsCount,
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * 5. GET /api/admin/jobs - Quản lý danh sách tin tuyển dụng
+     */
+    public function jobs(Request $request): JsonResponse
+    {
+        $query = Job::with('company');
+
+        if ($request->filled('keyword')) {
+            $keyword = $request->query('keyword');
+            $query->where('title', 'like', "%{$keyword}%");
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->query('status'));
+        }
+
+        if ($request->filled('is_reported')) {
+            $query->where('is_reported', $request->query('is_reported'));
+        }
+
+        $sort = $request->query('sort', 'newest');
+        if ($sort === 'oldest') {
+            $query->oldest();
+        } elseif ($sort === 'name') {
+            $query->orderBy('title', 'asc');
+        } else {
+            $query->latest();
+        }
+
+        $perPage = $request->query('per_page', 15);
+        $jobs = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $jobs->items(),
+            'meta' => [
+                'total' => $jobs->total(),
+                'page' => $jobs->currentPage(),
+                'per_page' => $jobs->perPage(),
+                'last_page' => $jobs->lastPage(),
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * 6. GET /api/admin/jobs/{job_id} - Chi tiết tin tuyển dụng & Tác động xóa
+     */
+    public function jobDetail($jobId): JsonResponse
+    {
+        $job = Job::with(['company.user', 'category', 'skills'])->find($jobId);
+
+        if (!$job) {
+            return response()->json(['success' => false, 'message' => 'Không tìm thấy tin tuyển dụng.'], 404);
+        }
+
+        // Thống kê các dữ liệu liên quan để Admin đánh giá tác động khi xóa
+        $applicationsCount = Application::where('job_id', $jobId)->count();
+        // Giả lập các biến đếm hội thoại/tin nhắn/lưu tin nếu hệ thống có bảng tương ứng
+        $conversationsCount = 0; 
+        $messagesCount = 0;
+        $analysesCount = Application::where('job_id', $jobId)->has('aiAnalysis')->count();
+        $savedCount = 0; // Thay thế bằng bảng favorite_jobs nếu có
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'job' => $job,
+                'owner' => $job->company ? $job->company->user : null,
+                'is_reported' => $job->is_reported,
+                'deletion_impact' => [
+                    'applications_count' => $applicationsCount,
+                    'conversations_count' => $conversationsCount,
+                    'messages_count' => $messagesCount,
+                    'analyses_count' => $analysesCount,
+                    'saved_count' => $savedCount,
+                ]
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
     /**
      * Lấy danh sách tin tuyển dụng bị báo cáo vi phạm hoặc toàn bộ tin để kiểm duyệt
      */
@@ -82,40 +296,7 @@ class AdminController extends Controller
     }
 
 
-    /**
-     * Xem danh sách người dùng, tìm kiếm theo tên/email, lọc theo vai trò và trạng thái
-     */
-    public function getUsers(Request $request): JsonResponse
-    {
-        $query = User::query();
 
-        // Tìm kiếm theo từ khóa (tên hoặc email)
-        if ($request->filled('keyword')) {
-            $keyword = trim($request->keyword);
-            $query->where(function ($q) use ($keyword) {
-                $q->where('name', 'like', "%{$keyword}%")
-                  ->orWhere('email', 'like', "%{$keyword}%");
-            });
-        }
-
-        // Lọc theo vai trò (candidate, employer, admin)
-        if ($request->filled('role')) {
-            $query->where('role', $request->role);
-        }
-
-        // Lọc theo trạng thái (active, locked)
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-
-        $users = $query->orderBy('created_at', 'desc')->paginate(10);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Lấy danh sách người dùng thành công.',
-            'data' => $users
-        ], 200);
-    }
 
     /**
      * Khóa hoặc Mở khóa tài khoản người dùng (FR-09.4)
@@ -231,5 +412,125 @@ class AdminController extends Controller
 
         $skill->delete();
         return response()->json(['success' => true, 'message' => 'Xóa kỹ năng thành công.']);
+    }
+    /**
+     * GET /api/admin/categories - Quản lý danh mục (Categories) cho Admin
+     */
+    public function categories(Request $request): JsonResponse
+    {
+        $query = Category::withCount('jobs');
+
+        // 1. Tìm kiếm theo từ khóa (keyword)
+        if ($request->filled('keyword')) {
+            $keyword = $request->query('keyword');
+            $query->where('name', 'like', "%{$keyword}%");
+        }
+
+        // 2. Lọc theo trạng thái sử dụng (usage: used / unused)
+        if ($request->filled('usage')) {
+            $usage = $request->query('usage');
+            if ($usage === 'used') {
+                $query->having('jobs_count', '>', 0);
+            } elseif ($usage === 'unused') {
+                $query->having('jobs_count', '=', 0);
+            }
+        }
+
+        // Tính toán tổng số lượng cho summary trước khi phân trang
+        $totalCategories = Category::count();
+        $usedCount = Category::has('jobs')->count();
+        $unusedCount = $totalCategories - $usedCount;
+
+        // 3. Sắp xếp (sort: name / usage / newest / oldest)
+        $sort = $request->query('sort', 'newest');
+        if ($sort === 'name') {
+            $query->orderBy('name', 'asc');
+        } elseif ($sort === 'usage') {
+            $query->orderBy('jobs_count', 'desc');
+        } elseif ($sort === 'oldest') {
+            $query->oldest();
+        } else {
+            $query->latest();
+        }
+
+        $perPage = $request->query('per_page', 15);
+        $categories = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $categories->items(),
+            'meta' => [
+                'total' => $categories->total(),
+                'page' => $categories->currentPage(),
+                'per_page' => $categories->perPage(),
+                'last_page' => $categories->lastPage(),
+            ],
+            'summary' => [
+                'total' => $totalCategories,
+                'used_count' => $usedCount,
+                'unused_count' => $unusedCount,
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * GET /api/admin/skills - Quản lý kỹ năng (Skills) cho Admin
+     */
+    public function skills(Request $request): JsonResponse
+    {
+        // Giả sử Model Skill có quan hệ jobs và candidateProfiles (hoặc tùy chỉnh theo DB thực tế của bạn)
+        $query = Skill::withCount(['jobs', 'candidateProfiles']);
+
+        // 1. Tìm kiếm theo từ khóa (keyword)
+        if ($request->filled('keyword')) {
+            $keyword = $request->query('keyword');
+            $query->where('name', 'like', "%{$keyword}%");
+        }
+
+        // 2. Lọc theo trạng thái sử dụng (usage: used / unused)
+        if ($request->filled('usage')) {
+            $usage = $request->query('usage');
+            if ($usage === 'used') {
+                $query->having('jobs_count', '>', 0)->orHaving('candidate_profiles_count', '>', 0);
+            } elseif ($usage === 'unused') {
+                $query->having('jobs_count', '=', 0)->where('candidate_profiles_count', '=', 0);
+            }
+        }
+
+        // Tính toán tổng số lượng cho summary
+        $totalSkills = Skill::count();
+        $usedCount = Skill::has('jobs')->orHas('candidateProfiles')->count();
+        $unusedCount = $totalSkills - $usedCount;
+
+        // 3. Sắp xếp (sort: name / usage / newest / oldest)
+        $sort = $request->query('sort', 'newest');
+        if ($sort === 'name') {
+            $query->orderBy('name', 'asc');
+        } elseif ($sort === 'usage') {
+            $query->orderBy('jobs_count', 'desc');
+        } elseif ($sort === 'oldest') {
+            $query->oldest();
+        } else {
+            $query->latest();
+        }
+
+        $perPage = $request->query('per_page', 15);
+        $skills = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $skills->items(),
+            'meta' => [
+                'total' => $skills->total(),
+                'page' => $skills->currentPage(),
+                'per_page' => $skills->perPage(),
+                'last_page' => $skills->lastPage(),
+            ],
+            'summary' => [
+                'total' => $totalSkills,
+                'used_count' => $usedCount,
+                'unused_count' => $unusedCount,
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }

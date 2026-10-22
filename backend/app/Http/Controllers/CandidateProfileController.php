@@ -6,6 +6,7 @@ use App\Http\Requests\UploadCvRequest;
 use App\Models\CandidateProfile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\JsonResponse;
 
 class CandidateProfileController extends Controller
 {
@@ -118,5 +119,97 @@ class CandidateProfileController extends Controller
             'success' => false,
             'message' => 'Không tìm thấy file tải lên.'
         ], 400);
+    }
+    public function getCv(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->role !== 'candidate') {
+            return response()->json(['success' => false, 'message' => 'Quyền hạn không hợp lệ.'], 403);
+        }
+
+        $profile = CandidateProfile::where('user_id', $user->id)->first();
+        if (!$profile || !$profile->cv_path) {
+            return response()->json(['success' => false, 'message' => 'Chưa có file CV nào được tải lên.'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Lấy đường dẫn CV thành công.',
+            'data' => [
+                'cv_url' => asset('storage/' . $profile->cv_path),
+                'cv_path' => $profile->cv_path
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    public function deleteCv(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->role !== 'candidate') {
+            return response()->json(['success' => false, 'message' => 'Quyền hạn không hợp lệ.'], 403);
+        }
+
+        $profile = CandidateProfile::where('user_id', $user->id)->first();
+        if ($profile && $profile->cv_file_path) {
+            Storage::disk('public')->delete($profile->cv_file_path);
+            $profile->cv_file_path = null;
+            $profile->save();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Xóa CV thành công.'
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    public function uploadAvatar(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->role !== 'candidate') {
+            return response()->json(['success' => false, 'message' => 'Quyền hạn không hợp lệ.'], 403);
+        }
+
+        $request->validate([
+            'avatar' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048', // Tối đa 2MB
+        ]);
+
+        $profile = CandidateProfile::firstOrCreate(['user_id' => $user->id]);
+
+        // Xóa ảnh cũ nếu có
+        if ($profile->avatar && Storage::disk('public')->exists($profile->avatar)) {
+            Storage::disk('public')->delete($profile->avatar);
+        }
+
+        $path = $request->file('avatar')->store('avatars', 'public');
+        $profile->avatar = $path;
+        $profile->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Cập nhật ảnh đại diện thành công.',
+            'data' => [
+                'avatar_url' => asset('storage/' . $path)
+            ]
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    public function deleteAvatar(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->role !== 'candidate') {
+            return response()->json(['success' => false, 'message' => 'Quyền hạn không hợp lệ.'], 403);
+        }
+
+        $profile = CandidateProfile::where('user_id', $user->id)->first();
+        if ($profile && $profile->avatar) {
+            Storage::disk('public')->delete($profile->avatar);
+            $profile->avatar = null;
+            $profile->save();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Xóa ảnh đại diện thành công.'
+        ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }

@@ -3,17 +3,19 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
-use Smalot\PdfParser\Parser; // Thư viện đọc nội dung PDF (nếu có)
+use Illuminate\Support\Facades\Log;
+use Smalot\PdfParser\Parser;
 
 class GeminiAiService
 {
     /**
      * Phân tích CV so với JD bằng Google Gemini AI theo chuẩn FR-07
      */
-    public function analyzeCvWithJob($cvFilePath, $jobDescription,$jobRequirements)
+    public function analyzeCvWithJob($cvFilePath, $jobDescription, $jobRequirements)
     {
         // 1. Trích xuất text từ file PDF CV của ứng viên
-        $cvText = $this->extractTextFromPdf(storage_path('app/public/' .$cvFilePath));
+        $fullPath = storage_path('app/public/' . $cvFilePath);
+        $cvText = $this->extractTextFromPdf($fullPath);
 
         // 2. Xây dựng Prompt chuẩn yêu cầu FR-07 của SRS
         $prompt = "
@@ -31,59 +33,67 @@ class GeminiAiService
 
             --- YÊU CẦU ĐẦU RA (JSON FORMAT) ---
             Hãy đánh giá dựa trên 4 tiêu chí: Kỹ năng chuyên môn (40%), Kinh nghiệm (30%), Học vấn/Chứng chỉ (15%), Ngoại ngữ/Định hướng (15%).
-            Trả về kết quả ĐÚNG định dạng JSON thuần túy (không có markdown code block như ```json):
+            Trả về kết quả ĐÚNG định dạng JSON thuần túy theo cấu trúc mẫu sau (không kèm text ngoài):
             {
-              \"match_score\": [Số nguyên từ 0 đến 100 thể hiện điểm tương thích],
+              \"match_score\": 85,
               \"summary\": \"Đoạn đánh giá tổng quan ngắn gọn dưới 80 từ về CV so với vị trí tuyển dụng\",
-              \"strengths\": [\"Điểm mạnh 1\", \"Điểm mạnh 2\", \"Điểm mạnh 3\"],
+              \"strengths\": [\"Điểm mạnh 1\", \"Điểm mạnh 2\"],
               \"matched_skills\": [\"Kỹ năng khớp 1\", \"Kỹ năng khớp 2\"],
-              \"missing_skills\": [\"Kỹ năng còn thiếu 1\", \"Kỹ năng còn thiếu 2\"],
+              \"missing_skills\": [\"Kỹ năng còn thiếu 1\"],
               \"recommendations\": [\"Lời khuyên cải thiện hồ sơ 1\"]
             }
         ";
 
         try {
-            $apiKey = config('services.gemini.key'); // Lấy API Key từ config/services.php hoặc env
+            $apiKey = config('services.gemini.key');
             
-            // Gọi Google Gemini API
+            if (empty($apiKey)) {
+                Log::error("Gemini AI Error: Chưa cấu hình GEMINI_API_KEY trong file .env");
+                return null;
+            }
+
+            $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={$apiKey}";
+
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
-            ])->post("[https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=){$apiKey}", [
+            ])->timeout(60)->post($url, [
                 'contents' => [
                     [
                         'parts' => [
-                            ['text' => $prompt]
-                        ]
-                    ]
-                ]
+                            ['text' => $prompt],
+                        ],
+                    ],
+                ],
+                'generationConfig' => [
+                    'response_mime_type' => 'application/json',
+                ],
             ]);
 
             if ($response->successful()) {
                 $aiResponseText = $response->json('candidates.0.content.parts.0.text');
                 
-                // Làm sạch chuỗi JSON trả về từ AI (loại bỏ markdown nếu có)
+                // Làm sạch và giải mã JSON
                 $cleanJson = trim(str_replace(['```json', '```'], '', $aiResponseText));
-                return json_decode($cleanJson, true);
+                $decoded = json_decode($cleanJson, true);
+
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
+            } else {
+                Log::error("Gemini API HTTP Error: " . $response->body());
             }
+
         } catch (\Exception $e) {
-            // Log lỗi nếu gọi AI thất bại và trả về kết quả giả lập mặc định
+            Log::error("Gemini AI Exception: " . $e->getMessage());
         }
 
-        // Fallback dữ liệu mẫu nếu chưa cấu hình API Key Gemini hoặc lỗi mạng
-        return [
-            'match_score' => 85,
-            'summary' => 'Ứng viên có nền tảng kỹ năng công nghệ khá phù hợp với yêu cầu cốt lõi của vị trí tuyển dụng.',
-            'strengths' => ['Đúng khung công nghệ yêu cầu', 'Số năm kinh nghiệm phù hợp'],
-            'matched_skills' => ['PHP', 'Laravel', 'MySQL'],
-            'missing_skills' => ['Docker', 'Redis'],
-            'recommendations' => ['Bổ sung thêm kinh nghiệm tối ưu hóa hệ thống vào hồ sơ.'],
-        ];
+        return null; // Trả về null để biết là lỗi gọi AI
     }
 
     private function extractTextFromPdf($filePath)
     {
         if (!file_exists($filePath)) {
-            return "Không tìm thấy nội dung file CV.";
+            return "Không tìm thấy nội dung file CV tại đường dẫn: " . $filePath;
         }
 
         try {
@@ -91,7 +101,8 @@ class GeminiAiService
             $pdf = $parser->parseFile($filePath);
             return $pdf->getText();
         } catch (\Exception $e) {
-            return "Không thể trích xuất văn bản từ tệp PDF scan.";
+            Log::error("PDF Parse Error: " . $e->getMessage());
+            return "Không thể trích xuất văn bản từ tệp PDF.";
         }
     }
 }
