@@ -447,11 +447,7 @@ class AdminController extends Controller
             $query->orderBy('name', 'asc');
         } elseif ($sort === 'usage') {
             $query->orderBy('jobs_count', 'desc');
-        } elseif ($sort === 'oldest') {
-            $query->oldest();
-        } else {
-            $query->latest();
-        }
+        } 
 
         $perPage = $request->query('per_page', 15);
         $categories = $query->paginate($perPage);
@@ -476,7 +472,7 @@ class AdminController extends Controller
     /**
      * GET /api/admin/skills - Quản lý kỹ năng (Skills) cho Admin
      */
-    public function skills(Request $request): JsonResponse
+    public function skills(Request $request): JsonResponse 
     {
         // Giả sử Model Skill có quan hệ jobs và candidateProfiles (hoặc tùy chỉnh theo DB thực tế của bạn)
         $query = Skill::withCount(['jobs', 'candidateProfiles']);
@@ -508,10 +504,6 @@ class AdminController extends Controller
             $query->orderBy('name', 'asc');
         } elseif ($sort === 'usage') {
             $query->orderBy('jobs_count', 'desc');
-        } elseif ($sort === 'oldest') {
-            $query->oldest();
-        } else {
-            $query->latest();
         }
 
         $perPage = $request->query('per_page', 15);
